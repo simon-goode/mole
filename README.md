@@ -23,7 +23,7 @@ mole go [dir]
 
 ### Modes
 
-| Command | Behaviour |
+| Command | Behavior |
 |---|---|
 | `mole` | General file uploader (accepts anything) |
 | `mole anything` | Same as `mole` |
