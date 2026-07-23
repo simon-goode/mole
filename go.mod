@@ -1,4 +1,4 @@
-module mole
+module github.com/simon-goode/mole
 
 go 1.22.5
 

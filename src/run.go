@@ -1,29 +1,28 @@
-package main
+package mole
 
 import (
 	"crypto/rand"
-	"embed"
+	"encoding/base64"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
-
-//go:embed index.html
-var indexHTML embed.FS
 
 type Config struct {
 	Mode   string
 	Safe   bool
 	Dir    string
 	Port   int
+	IP     string
 	Token  string
+	EncKey []byte
 	dirSet bool
 }
 
@@ -32,22 +31,6 @@ func (c *Config) outputDir() string {
 		return filepath.Join(os.TempDir(), "mole-"+c.Token)
 	}
 	return c.Dir
-}
-
-func (c *Config) validateFile(header interface{ Get(string) string }) error {
-	ct := header.Get("Content-Type")
-
-	switch c.Mode {
-	case "photos":
-		if !strings.HasPrefix(ct, "image/") {
-			return fmt.Errorf("only image files are accepted in photos mode")
-		}
-	case "pdfs":
-		if ct != "application/pdf" {
-			return fmt.Errorf("only PDF files are accepted in pdfs mode")
-		}
-	}
-	return nil
 }
 
 func generateToken() string {
@@ -64,24 +47,37 @@ func defaultDir() string {
 	return filepath.Join(home, "Downloads")
 }
 
-func parseArgs(args []string, port int) *Config {
+func parseArgs(args []string) *Config {
 	cfg := &Config{
 		Mode: "anything",
-		Port: port,
+		Port: 8080,
 	}
 
-	for _, arg := range args {
-		switch arg {
-		case "photos", "pdfs", "text", "anything":
-			cfg.Mode = arg
-		case "safe":
-			cfg.Safe = true
-		case "go":
-			cfg.Mode = "go"
-		default:
-			if strings.HasPrefix(arg, "-") {
-				continue
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-p" || arg == "--port":
+			if i+1 < len(args) {
+				port, err := strconv.Atoi(args[i+1])
+				if err == nil {
+					cfg.Port = port
+				}
+				i++
 			}
+		case arg == "-i" || arg == "--ip":
+			if i+1 < len(args) {
+				cfg.IP = args[i+1]
+				i++
+			}
+		case arg == "photos" || arg == "pdfs" || arg == "text" || arg == "anything":
+			cfg.Mode = arg
+		case arg == "safe":
+			cfg.Safe = true
+		case arg == "go":
+			cfg.Mode = "go"
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
 			cfg.Dir = arg
 			cfg.dirSet = true
 		}
@@ -94,11 +90,8 @@ func parseArgs(args []string, port int) *Config {
 	return cfg
 }
 
-func main() {
-	portFlag := flag.Int("p", 8080, "port to listen on")
-	flag.Parse()
-
-	cfg := parseArgs(flag.Args(), *portFlag)
+func Run() {
+	cfg := parseArgs(os.Args[1:])
 
 	if cfg.Mode == "go" {
 		releaseDir := ""
@@ -115,10 +108,21 @@ func main() {
 	token := generateToken()
 	cfg.Token = token
 
-	ip, err := detectIP()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error detecting network: %v\n", err)
+	encKey := make([]byte, 32)
+	if _, err := rand.Read(encKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating encryption key: %v\n", err)
 		os.Exit(1)
+	}
+	cfg.EncKey = encKey
+
+	ip := cfg.IP
+	if ip == "" {
+		var err error
+		ip, err = detectIP()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error detecting network: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
@@ -170,7 +174,14 @@ func main() {
 		fmt.Println("\nShutting down...")
 		server.Close()
 		if cfg.Safe {
-			fmt.Printf("Files queued in %s\n", cfg.outputDir())
+			tempDir := cfg.outputDir()
+			entries, err := os.ReadDir(tempDir)
+			if err == nil && len(entries) == 0 {
+				os.RemoveAll(tempDir)
+				clearState()
+			} else {
+				fmt.Printf("Files queued in %s\n", tempDir)
+			}
 		}
 		os.Exit(0)
 	}()
@@ -188,7 +199,8 @@ func main() {
 		fmt.Println()
 	}
 
-	url := fmt.Sprintf("http://%s:%d/%s/", ip, cfg.Port, token)
+	b64Key := base64.RawURLEncoding.EncodeToString(encKey)
+	url := fmt.Sprintf("http://%s:%d/%s/#%s", ip, cfg.Port, token, b64Key)
 	showQR(url)
 
 	fmt.Printf("\n📡  Server: %s\n", url)

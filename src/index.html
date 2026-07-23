@@ -74,12 +74,16 @@ code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:3px;font-siz
   <div id="messages"></div>
 </div>
 
-<script>
-(function(){
+<script type="module">
+import { gcm } from 'noble-aes-gcm.js';
+
 var MODE = '{{MODE}}';
 var SAFE = '{{SAFE}}' === 'true';
 var TOKEN = window.location.pathname.split('/').filter(Boolean)[0];
 var BASE = '/' + TOKEN;
+
+var encKeyBase64 = location.hash.replace('#', '');
+var encKeyBytes = Uint8Array.from(atob(encKeyBase64), function(c) { return c.charCodeAt(0); });
 
 var els = {};
 ['mode-badge','safe-notice','file-mode','text-mode','drop-zone','file-input','camera-section','camera-btn','camera-input','file-list','upload-btn','text-input','send-text-btn','progress-wrap','progress-fill','messages'].forEach(function(id){
@@ -135,6 +139,23 @@ function addMsg(text, type) {
   setTimeout(function(){ d.remove(); }, 8000);
 }
 
+function encryptFile(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function() {
+      var nonce = crypto.getRandomValues(new Uint8Array(12));
+      var cipher = gcm(encKeyBytes, nonce);
+      var ciphertext = cipher.encrypt(new Uint8Array(reader.result));
+      var combined = new Uint8Array(12 + ciphertext.length);
+      combined.set(nonce);
+      combined.set(ciphertext, 12);
+      resolve(new Blob([combined]));
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 els['drop-zone'].addEventListener('click', function(){ els['file-input'].click(); });
 els['drop-zone'].addEventListener('dragover', function(e){ e.preventDefault(); els['drop-zone'].classList.add('drag-over'); });
 els['drop-zone'].addEventListener('dragleave', function(){ els['drop-zone'].classList.remove('drag-over'); });
@@ -162,47 +183,75 @@ els['camera-input'].addEventListener('change', function(){
 
 els['upload-btn'].addEventListener('click', function(){
   if (files.length === 0) return;
-  var formData = new FormData();
-  files.forEach(function(f){ formData.append('file', f); });
 
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', BASE + '/upload');
+  els['upload-btn'].disabled = true;
 
-  xhr.upload.onprogress = function(e){
-    if (e.lengthComputable) {
-      els['progress-wrap'].classList.remove('hidden');
-      els['progress-fill'].style.width = (e.loaded / e.total * 100) + '%';
-    }
-  };
+  Promise.all(files.map(function(f) {
+    return encryptFile(f);
+  })).then(function(encryptedBlobs) {
+    var formData = new FormData();
+    encryptedBlobs.forEach(function(blob, i) {
+      formData.append('file', blob, files[i].name);
+    });
 
-  xhr.onload = function(){
-    els['progress-wrap'].classList.add('hidden');
-    els['progress-fill'].style.width = '0';
-    if (xhr.status === 200) {
-      var resp = JSON.parse(xhr.responseText);
-      var ok = resp.results.filter(function(r){ return r.status === 'ok'; }).length;
-      var errs = resp.results.filter(function(r){ return r.error; });
-      if (ok > 0) addMsg('Uploaded ' + ok + ' file(s)', 'success');
-      errs.forEach(function(e){ addMsg(e.filename + ': ' + e.error, 'error'); });
-      files = [];
-      renderFiles();
-    } else {
-      addMsg('Upload failed (HTTP ' + xhr.status + ')', 'error');
-    }
-  };
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', BASE + '/upload');
 
-  xhr.onerror = function(){ addMsg('Network error', 'error'); };
+    xhr.upload.onprogress = function(e){
+      if (e.lengthComputable) {
+        els['progress-wrap'].classList.remove('hidden');
+        els['progress-fill'].style.width = (e.loaded / e.total * 100) + '%';
+      }
+    };
 
-  xhr.send(formData);
+    xhr.onload = function(){
+      els['progress-wrap'].classList.add('hidden');
+      els['progress-fill'].style.width = '0';
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText);
+        var ok = resp.results.filter(function(r){ return r.status === 'ok'; }).length;
+        var errs = resp.results.filter(function(r){ return r.error; });
+        if (ok > 0) addMsg('Uploaded ' + ok + ' file(s)', 'success');
+        errs.forEach(function(e){ addMsg(e.filename + ': ' + e.error, 'error'); });
+        files = [];
+        renderFiles();
+      } else {
+        addMsg('Upload failed (HTTP ' + xhr.status + ')', 'error');
+      }
+      els['upload-btn'].disabled = false;
+    };
+
+    xhr.onerror = function(){
+      addMsg('Network error', 'error');
+      els['upload-btn'].disabled = false;
+    };
+
+    xhr.send(formData);
+  }).catch(function(err) {
+    addMsg('Encryption failed', 'error');
+    els['upload-btn'].disabled = false;
+  });
 });
 
 els['send-text-btn'].addEventListener('click', function(){
   var text = els['text-input'].value;
   if (!text.trim()) return;
+
+  els['send-text-btn'].disabled = true;
+
+  var nonce = crypto.getRandomValues(new Uint8Array(12));
+  var plaintext = new TextEncoder().encode(text);
+  var cipher = gcm(encKeyBytes, nonce);
+  var ciphertext = cipher.encrypt(plaintext);
+  var combined = new Uint8Array(12 + ciphertext.length);
+  combined.set(nonce);
+  combined.set(ciphertext, 12);
+
   var xhr = new XMLHttpRequest();
   xhr.open('POST', BASE + '/text');
-  xhr.setRequestHeader('Content-Type', 'text/plain');
+
   xhr.onload = function(){
+    els['send-text-btn'].disabled = false;
     if (xhr.status === 200) {
       addMsg('Text sent', 'success');
       els['text-input'].value = '';
@@ -210,10 +259,14 @@ els['send-text-btn'].addEventListener('click', function(){
       addMsg('Failed to send text', 'error');
     }
   };
-  xhr.onerror = function(){ addMsg('Network error', 'error'); };
-  xhr.send(text);
+
+  xhr.onerror = function(){
+    addMsg('Network error', 'error');
+    els['send-text-btn'].disabled = false;
+  };
+
+  xhr.send(combined);
 });
-})();
 </script>
 </body>
 </html>

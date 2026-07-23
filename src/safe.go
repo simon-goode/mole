@@ -1,4 +1,4 @@
-package main
+package mole
 
 import (
 	"encoding/json"
@@ -84,7 +84,8 @@ func releaseFiles(destDirOverride string) error {
 
 	entries, err := os.ReadDir(state.TempDir)
 	if err != nil {
-		return fmt.Errorf("cannot read temp directory: %v", err)
+		clearState()
+		return fmt.Errorf("cannot read temp directory (already cleaned up?): %v", err)
 	}
 
 	if len(entries) == 0 {

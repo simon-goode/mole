@@ -1,6 +1,9 @@
-package main
+package mole
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +13,10 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed index.html
+//go:embed noble-aes-gcm.js
+var indexHTML embed.FS
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -93,44 +100,69 @@ func handleUpload(cfg *Config) http.HandlerFunc {
 				continue
 			}
 
-			if err := cfg.validateFile(part.Header); err != nil {
+			encryptedData, err := io.ReadAll(part)
+			if err != nil {
 				results = append(results, map[string]interface{}{
 					"filename": filename,
-					"error":    err.Error(),
+					"error":    fmt.Sprintf("error reading encrypted data: %v", err),
 				})
-				io.Copy(io.Discard, part)
+				continue
+			}
+
+			if len(encryptedData) < 12 {
+				results = append(results, map[string]interface{}{
+					"filename": filename,
+					"error":    "corrupted encrypted data",
+				})
+				continue
+			}
+
+			iv := encryptedData[:12]
+			ciphertext := encryptedData[12:]
+
+			block, err := aes.NewCipher(cfg.EncKey)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"filename": filename,
+					"error":    "decryption setup failed",
+				})
+				continue
+			}
+
+			aesgcm, err := cipher.NewGCM(block)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"filename": filename,
+					"error":    "decryption setup failed",
+				})
+				continue
+			}
+
+			plaintext, err := aesgcm.Open(nil, iv, ciphertext, nil)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"filename": filename,
+					"error":    "decryption failed: data may be tampered",
+				})
 				continue
 			}
 
 			destPath := uniquePath(destDir, filename)
-			dst, err := os.Create(destPath)
-			if err != nil {
+			if err := os.WriteFile(destPath, plaintext, 0644); err != nil {
 				results = append(results, map[string]interface{}{
 					"filename": filename,
 					"error":    fmt.Sprintf("cannot create file: %v", err),
 				})
-				io.Copy(io.Discard, part)
-				continue
-			}
-
-			written, err := io.Copy(dst, part)
-			dst.Close()
-			if err != nil {
-				results = append(results, map[string]interface{}{
-					"filename": filename,
-					"error":    fmt.Sprintf("write error: %v", err),
-				})
-				os.Remove(destPath)
 				continue
 			}
 
 			results = append(results, map[string]interface{}{
 				"filename": filepath.Base(destPath),
-				"size":     written,
+				"size":     len(plaintext),
 				"status":   "ok",
 			})
 
-			fmt.Printf("Received: %s (%d bytes)\n", filepath.Base(destPath), written)
+			fmt.Printf("Received: %s (%d bytes)\n", filepath.Base(destPath), len(plaintext))
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
@@ -155,20 +187,46 @@ func handleText(cfg *Config) http.HandlerFunc {
 			return
 		}
 
+		if len(body) < 12 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "corrupted encrypted data"})
+			return
+		}
+
+		iv := body[:12]
+		ciphertext := body[12:]
+
+		block, err := aes.NewCipher(cfg.EncKey)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "decryption setup failed"})
+			return
+		}
+
+		aesgcm, err := cipher.NewGCM(block)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "decryption setup failed"})
+			return
+		}
+
+		plaintext, err := aesgcm.Open(nil, iv, ciphertext, nil)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decryption failed: data may be tampered"})
+			return
+		}
+
 		timestamp := time.Now().Format("2006-01-02_150405")
 		filename := fmt.Sprintf("mole_%s.txt", timestamp)
 
 		destPath := uniquePath(cfg.outputDir(), filename)
-		if err := os.WriteFile(destPath, body, 0644); err != nil {
+		if err := os.WriteFile(destPath, plaintext, 0644); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save text"})
 			return
 		}
 
-		fmt.Printf("Received: %s (%d bytes)\n", filepath.Base(destPath), len(body))
+		fmt.Printf("Received: %s (%d bytes)\n", filepath.Base(destPath), len(plaintext))
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"filename": filepath.Base(destPath),
-			"size":     len(body),
+			"size":     len(plaintext),
 			"status":   "ok",
 		})
 	}
@@ -182,6 +240,14 @@ func mainHandler(cfg *Config) http.HandlerFunc {
 		switch path {
 		case "":
 			handleIndex(cfg)(w, r)
+		case "noble-aes-gcm.js":
+			data, err := indexHTML.ReadFile("noble-aes-gcm.js")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			w.Write(data)
 		case "upload":
 			handleUpload(cfg)(w, r)
 		case "text":
