@@ -98,5 +98,5 @@ mole photos safe ./pics -p 9090
 ```bash
 git clone https://github.com/simongoode/mole
 cd mole
-go build -o mole .
+go build -o mole ./src/
 ```

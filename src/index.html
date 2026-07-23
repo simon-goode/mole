@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>mole</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#eee;min-height:100vh;display:flex;justify-content:center;padding:20px}
+.container{max-width:500px;width:100%}
+h1{font-size:2rem;margin-bottom:4px}
+h1 span{font-size:.85rem;opacity:.5;font-weight:400}
+.mode-badge{display:inline-block;background:#16213e;padding:4px 12px;border-radius:12px;font-size:.8rem;margin-bottom:20px;text-transform:uppercase;letter-spacing:1px;color:#aaa}
+.drop-zone{border:2px dashed #0f3460;border-radius:12px;padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:12px}
+.drop-zone:hover,.drop-zone.drag-over{border-color:#e94560;background:rgba(233,69,96,.08)}
+.drop-zone p{font-size:.95rem;opacity:.7}
+.btn{display:block;background:#0f3460;color:#eee;border:none;padding:14px 24px;border-radius:8px;font-size:1rem;cursor:pointer;transition:background .2s;width:100%;margin-bottom:8px;text-align:center}
+.btn:hover{background:#1a4a8a}
+.btn-primary{background:#e94560}
+.btn-primary:hover{background:#ff6b81}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{background:#16213e;color:#aaa}
+.btn-secondary:hover{background:#1f2d52;color:#eee}
+input[type=file]{display:none}
+.camera-btn{display:block;background:#16213e;padding:12px;text-align:center;border-radius:8px;cursor:pointer;margin-bottom:8px;font-size:1rem;transition:background .2s}
+.camera-btn:hover{background:#1f2d52}
+.file-list{margin-bottom:12px;max-height:300px;overflow-y:auto}
+.file-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#16213e;border-radius:6px;margin-bottom:4px;font-size:.85rem;gap:8px}
+.file-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item .size{opacity:.5;white-space:nowrap}
+.file-item .remove{cursor:pointer;opacity:.5;font-size:1.1rem;line-height:1;padding:0 4px}
+.file-item .remove:hover{opacity:1;color:#e94560}
+textarea{width:100%;min-height:220px;background:#16213e;color:#eee;border:1px solid #0f3460;border-radius:8px;padding:14px;font-size:1rem;resize:vertical;margin-bottom:12px;font-family:inherit}
+textarea:focus{outline:none;border-color:#e94560}
+.progress-wrap{height:6px;background:#0f3460;border-radius:3px;overflow:hidden;margin-bottom:12px}
+.progress-fill{height:100%;background:#e94560;width:0;transition:width .3s}
+.msg{padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:.9rem;line-height:1.4}
+.msg.success{background:rgba(76,175,80,.15);color:#81c784}
+.msg.error{background:rgba(244,67,54,.15);color:#e57373}
+.msg.info{background:rgba(33,150,243,.15);color:#64b5f6}
+.hidden{display:none!important}
+code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:3px;font-size:.85rem}
+.browse-link{color:#e94560;text-decoration:underline}
+#messages{margin-top:8px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>mole <span>one&middot;time local exchange</span></h1>
+  <div class="mode-badge" id="mode-badge"></div>
+
+  <div id="safe-notice" class="hidden"><div class="msg info">Files will be queued. Run <code>mole go</code> on the host to release them.</div></div>
+
+  <div id="file-mode" class="hidden">
+    <div class="drop-zone" id="drop-zone">
+      <p>Drop files here</p>
+      <p style="font-size:.8rem;opacity:.5;margin-top:6px">or <span class="browse-link">browse</span> to select</p>
+    </div>
+    <input type="file" id="file-input" multiple>
+    <div id="camera-section" class="hidden">
+      <div class="camera-btn" id="camera-btn">📷  Take Photo</div>
+      <input type="file" id="camera-input" accept="image/*" capture="environment">
+    </div>
+    <div class="file-list" id="file-list"></div>
+    <button class="btn btn-primary" id="upload-btn" disabled>Upload</button>
+  </div>
+
+  <div id="text-mode" class="hidden">
+    <textarea id="text-input" placeholder="Paste or type text here…"></textarea>
+    <button class="btn btn-primary" id="send-text-btn">Send Text</button>
+  </div>
+
+  <div class="progress-wrap hidden" id="progress-wrap"><div class="progress-fill" id="progress-fill"></div></div>
+  <div id="messages"></div>
+</div>
+
+<script>
+(function(){
+var MODE = '{{MODE}}';
+var SAFE = '{{SAFE}}' === 'true';
+var TOKEN = window.location.pathname.split('/').filter(Boolean)[0];
+var BASE = '/' + TOKEN;
+
+var els = {};
+['mode-badge','safe-notice','file-mode','text-mode','drop-zone','file-input','camera-section','camera-btn','camera-input','file-list','upload-btn','text-input','send-text-btn','progress-wrap','progress-fill','messages'].forEach(function(id){
+  els[id] = document.getElementById(id);
+});
+
+els['mode-badge'].textContent = MODE;
+
+if (MODE === 'text') {
+  els['text-mode'].classList.remove('hidden');
+} else {
+  els['file-mode'].classList.remove('hidden');
+  if (MODE === 'photos') {
+    els['file-input'].setAttribute('accept','image/*');
+    els['camera-section'].classList.remove('hidden');
+  } else if (MODE === 'pdfs') {
+    els['file-input'].setAttribute('accept','application/pdf');
+  }
+}
+
+if (SAFE) els['safe-notice'].classList.remove('hidden');
+
+var files = [];
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function renderFiles() {
+  els['file-list'].innerHTML = '';
+  files.forEach(function(f, i){
+    var div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = '<span class="name">' + esc(f.name) + '</span><span class="size">' + formatSize(f.size) + '</span><span class="remove" data-idx="' + i + '">&times;</span>';
+    div.querySelector('.remove').addEventListener('click', function(){
+      files.splice(i,1);
+      renderFiles();
+    });
+    els['file-list'].appendChild(div);
+  });
+  els['upload-btn'].disabled = files.length === 0;
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+function addMsg(text, type) {
+  var d = document.createElement('div');
+  d.className = 'msg ' + type;
+  d.textContent = text;
+  els['messages'].appendChild(d);
+  setTimeout(function(){ d.remove(); }, 8000);
+}
+
+els['drop-zone'].addEventListener('click', function(){ els['file-input'].click(); });
+els['drop-zone'].addEventListener('dragover', function(e){ e.preventDefault(); els['drop-zone'].classList.add('drag-over'); });
+els['drop-zone'].addEventListener('dragleave', function(){ els['drop-zone'].classList.remove('drag-over'); });
+els['drop-zone'].addEventListener('drop', function(e){
+  e.preventDefault();
+  els['drop-zone'].classList.remove('drag-over');
+  var dropped = Array.from(e.dataTransfer.files);
+  files = files.concat(dropped);
+  renderFiles();
+});
+els['file-input'].addEventListener('change', function(){
+  var selected = Array.from(this.files);
+  files = files.concat(selected);
+  renderFiles();
+  this.value = '';
+});
+
+els['camera-btn'].addEventListener('click', function(){ els['camera-input'].click(); });
+els['camera-input'].addEventListener('change', function(){
+  var selected = Array.from(this.files);
+  files = files.concat(selected);
+  renderFiles();
+  this.value = '';
+});
+
+els['upload-btn'].addEventListener('click', function(){
+  if (files.length === 0) return;
+  var formData = new FormData();
+  files.forEach(function(f){ formData.append('file', f); });
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', BASE + '/upload');
+
+  xhr.upload.onprogress = function(e){
+    if (e.lengthComputable) {
+      els['progress-wrap'].classList.remove('hidden');
+      els['progress-fill'].style.width = (e.loaded / e.total * 100) + '%';
+    }
+  };
+
+  xhr.onload = function(){
+    els['progress-wrap'].classList.add('hidden');
+    els['progress-fill'].style.width = '0';
+    if (xhr.status === 200) {
+      var resp = JSON.parse(xhr.responseText);
+      var ok = resp.results.filter(function(r){ return r.status === 'ok'; }).length;
+      var errs = resp.results.filter(function(r){ return r.error; });
+      if (ok > 0) addMsg('Uploaded ' + ok + ' file(s)', 'success');
+      errs.forEach(function(e){ addMsg(e.filename + ': ' + e.error, 'error'); });
+      files = [];
+      renderFiles();
+    } else {
+      addMsg('Upload failed (HTTP ' + xhr.status + ')', 'error');
+    }
+  };
+
+  xhr.onerror = function(){ addMsg('Network error', 'error'); };
+
+  xhr.send(formData);
+});
+
+els['send-text-btn'].addEventListener('click', function(){
+  var text = els['text-input'].value;
+  if (!text.trim()) return;
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', BASE + '/text');
+  xhr.setRequestHeader('Content-Type', 'text/plain');
+  xhr.onload = function(){
+    if (xhr.status === 200) {
+      addMsg('Text sent', 'success');
+      els['text-input'].value = '';
+    } else {
+      addMsg('Failed to send text', 'error');
+    }
+  };
+  xhr.onerror = function(){ addMsg('Network error', 'error'); };
+  xhr.send(text);
+});
+})();
+</script>
+</body>
+</html>
