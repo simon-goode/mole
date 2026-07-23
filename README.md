@@ -9,7 +9,7 @@ Lightweight peer-to-peer file transfer tool. Files stream directly from phone to
 ## Installation
 
 ```bash
-go install github.com/simongoode/mole@latest
+go install github.com/simon-goode/mole@latest
 ```
 
 Or download a prebuilt binary from the releases page.
@@ -96,7 +96,7 @@ mole photos safe ./pics -p 9090
 ## Build from source
 
 ```bash
-git clone https://github.com/simongoode/mole
+git clone https://github.com/simon-goode/mole
 cd mole
 go build -o mole ./src/
 ```
