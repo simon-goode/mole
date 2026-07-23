@@ -40,11 +40,7 @@ func generateToken() string {
 }
 
 func defaultDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "."
-	}
-	return filepath.Join(home, "Downloads")
+	return "."
 }
 
 func parseArgs(args []string) *Config {
