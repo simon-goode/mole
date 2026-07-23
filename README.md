@@ -99,5 +99,5 @@ mole photos safe ./pics -p 9090
 git clone https://github.com/simon-goode/mole
 cd mole
 go build -o mole .
-# binary at ./mole
+go install .
 ```
