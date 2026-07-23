@@ -82,7 +82,7 @@ var SAFE = '{{SAFE}}' === 'true';
 var TOKEN = window.location.pathname.split('/').filter(Boolean)[0];
 var BASE = '/' + TOKEN;
 
-var encKeyBase64 = location.hash.replace('#', '');
+var encKeyBase64 = location.hash.replace('#', '').replace(/-/g, '+').replace(/_/g, '/');
 var encKeyBytes = Uint8Array.from(atob(encKeyBase64), function(c) { return c.charCodeAt(0); });
 
 var els = {};
