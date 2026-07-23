@@ -1,7 +1,7 @@
 # mole - Mobile One-time Local Exchange
 
 <p align="center">
-  <img src="media/banner.png" alt="mole">
+  <img src="media/banner.png" alt="mole" width=30%>
 </p>
 
 Lightweight peer-to-peer file transfer tool. Files stream directly from phone to computer over your local network.
